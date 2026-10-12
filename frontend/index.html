@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Harita3000</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@380;520;650&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:,">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: "#122033",
+            pine: "#1f6f5b",
+            sand: "#f3efe4",
+            copper: "#c56a2d",
+          },
+          fontFamily: { sans: ["Outfit", "sans-serif"] },
+        },
+      },
+    };
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .scroll-thin::-webkit-scrollbar { width: 8px; }
+    .scroll-thin::-webkit-scrollbar-thumb { background: rgba(243, 239, 228, 0.25); border-radius: 99px; }
+    .field {
+      width: 100%;
+      border-radius: 0.65rem;
+      border: 1px solid rgba(243, 239, 228, 0.16);
+      background: rgba(255, 255, 255, 0.06);
+      color: #f3efe4;
+      padding: 0.45rem 0.65rem;
+      font-size: 0.875rem;
+    }
+    .field:focus { outline: 2px solid rgba(197, 106, 45, 0.7); }
+    .field option { color: #122033; }
+    .pin-moving { animation: pin-bob 1.1s ease-in-out infinite; }
+    @keyframes pin-bob {
+      50% { transform: translateY(-6px); }
+    }
+    .leaflet-container { font-family: Outfit, sans-serif; }
+    .pulse-dot { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.7); animation: pulse 1.6s infinite; }
+    @keyframes pulse {
+      70% { box-shadow: 0 0 0 8px rgba(22, 163, 74, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+    }
+  </style>
+</head>
+<body class="h-screen overflow-hidden bg-sand font-sans text-ink" x-data="haritaApp()" x-init="init()" x-cloak>
+  <div x-show="booting" class="grid h-screen place-items-center text-ink/70">Harita3000 açılıyor…</div>
+
+  <div x-show="!booting && !user && !authRequired" class="grid h-screen place-items-center p-8">
+    <div class="max-w-sm text-center">
+      <p class="text-3xl font-semibold">Harita3000</p>
+      <p class="mt-4 text-copper" x-text="authError || 'Program başlatılamadı'"></p>
+      <button type="button" class="mt-6 rounded-xl bg-pine px-5 py-2.5 font-semibold text-white" @click="start()">Yeniden dene</button>
+    </div>
+  </div>
+
+  <div x-show="!booting && !user && authRequired" class="grid min-h-screen lg:grid-cols-2">
+    <section class="relative hidden overflow-hidden bg-ink text-sand lg:flex lg:flex-col lg:justify-between p-12">
+      <div class="absolute inset-0 opacity-30" style="background-image: radial-gradient(circle at 20% 20%, #1f6f5b 0 2px, transparent 2px), radial-gradient(circle at 70% 60%, #c56a2d 0 2px, transparent 2px); background-size: 42px 42px;"></div>
+      <div class="relative">
+        <p class="text-xs tracking-[0.28em] uppercase text-sand/60">Saha operasyon</p>
+        <h1 class="mt-4 text-5xl font-semibold">Harita3000</h1>
+        <p class="mt-4 max-w-sm text-sand/80">Müşteri, sevkiyat ve saha ziyaretini tek haritada toplayan operasyon masası.</p>
+      </div>
+      <p class="relative text-sm text-sand/50">Demo: admin / admin123</p>
+    </section>
+    <section class="flex items-center justify-center p-8">
+      <form class="w-full max-w-sm" @submit.prevent="login">
+        <p class="text-xs tracking-[0.22em] uppercase text-ink/50 lg:hidden">Harita3000</p>
+        <h2 class="mt-2 text-3xl font-semibold">Giriş</h2>
+        <label class="mt-8 block text-sm">Kullanıcı adı
+          <input class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2" x-model="username" autocomplete="username" required>
+        </label>
+        <label class="mt-4 block text-sm">Parola
+          <input class="mt-1 w-full rounded-xl border border-ink/15 bg-white px-3 py-2" type="password" x-model="password" autocomplete="current-password" required>
+        </label>
+        <p class="mt-3 text-sm text-copper" x-show="authError" x-text="authError"></p>
+        <button class="mt-6 w-full rounded-xl bg-pine px-4 py-2.5 font-semibold text-white disabled:opacity-60" :disabled="busy">Oturum aç</button>
+      </form>
+    </section>
+  </div>
+
+  <div x-show="!booting && user" class="flex h-screen flex-col md:flex-row">
+    <aside class="flex h-[46vh] w-full shrink-0 flex-col bg-ink text-sand md:h-screen md:w-[400px]">
+      <header class="flex items-center justify-between gap-3 px-4 py-4">
+        <div>
+          <p class="text-lg font-semibold">Harita3000</p>
+          <p class="text-xs text-sand/60" x-text="user ? roleLabel(user.role) + ' · ' + (user.full_name || user.username) : ''"></p>
+        </div>
+        <button type="button" class="rounded-lg px-2 py-1 text-sm text-sand/70 hover:bg-white/10" x-show="authRequired" @click="logout">Çıkış</button>
+      </header>
+      <nav class="grid grid-cols-3 gap-1 px-3 text-center text-xs">
+        <button type="button" class="rounded-lg px-2 py-2" :class="tab === 'entities' ? 'bg-white/10' : 'text-sand/60'" @click="tab = 'entities'">Cariler</button>
+        <button type="button" class="rounded-lg px-2 py-2" :class="tab === 'shipments' ? 'bg-white/10' : 'text-sand/60'" @click="tab = 'shipments'">Sevkiyat</button>
+        <button type="button" class="rounded-lg px-2 py-2" :class="tab === 'visits' ? 'bg-white/10' : 'text-sand/60'" @click="tab = 'visits'">Ziyaret</button>
+        <button type="button" class="rounded-lg px-2 py-2" :class="tab === 'company' ? 'bg-white/10' : 'text-sand/60'" @click="tab = 'company'">Firma</button>
+        <button type="button" class="rounded-lg px-2 py-2" :class="tab === 'fleet' ? 'bg-white/10' : 'text-sand/60'" x-show="can('fleetView')" @click="tab = 'fleet'">Filo</button>
+        <button type="button" class="rounded-lg px-2 py-2" :class="tab === 'reports' ? 'bg-white/10' : 'text-sand/60'" @click="tab = 'reports'">Rapor</button>
+      </nav>
+
+      <div class="scroll-thin mt-3 flex-1 space-y-3 overflow-y-auto px-3 pb-6">
+        <section x-show="tab === 'entities'" class="space-y-3">
+          <input class="field" placeholder="Unvan, telefon, vergi no" x-model="filters.search" @input.debounce.350ms="refresh()">
+          <div class="grid grid-cols-2 gap-2">
+            <select class="field" x-model="filters.entity_type" @change="refresh()">
+              <option value="">Tüm tipler</option>
+              <template x-for="kind in entityTypes" :key="kind.value"><option :value="kind.value" x-text="kind.label"></option></template>
+            </select>
+            <select class="field" x-model="filters.category" @change="refresh()">
+              <option value="">Tüm kategoriler</option>
+              <template x-for="category in categories" :key="category">
+                <option :value="category" x-text="category"></option>
+              </template>
+            </select>
+            <select class="field" x-model="filters.status" @change="refresh()">
+              <option value="">Tüm durumlar</option>
+              <option value="aktif">Aktif</option>
+              <option value="pasif">Pasif</option>
+            </select>
+            <select class="field" x-model="filters.region_id" @change="refresh()">
+              <option value="">Tüm bölgeler</option>
+              <template x-for="region in regions" :key="region.id">
+                <option :value="region.id" x-text="region.name"></option>
+              </template>
+            </select>
+          </div>
+          <div class="flex gap-2" x-show="can('entityWrite')">
+            <button type="button" class="rounded-lg bg-copper px-3 py-1.5 text-sm font-semibold" @click="openEntityForm()">Yeni cari</button>
+            <button type="button" class="rounded-lg bg-white/10 px-3 py-1.5 text-sm" @click="startPick('any')" :disabled="!mapReady">Haritada işaretle</button>
+            <label class="cursor-pointer rounded-lg bg-white/10 px-3 py-1.5 text-sm">İçe aktar
+              <input class="hidden" type="file" accept=".csv,.xlsx" @change="importFile">
+            </label>
+            <button type="button" class="rounded-lg bg-white/10 px-3 py-1.5 text-sm" :disabled="busy" @click="exportEntities('xlsx')">Dışa aktar</button>
+          </div>
+          <form x-show="showEntityForm" class="space-y-2 rounded-2xl bg-white/5 p-3" @submit.prevent="saveEntity">
+            <input class="field" placeholder="Unvan" x-model="entityForm.name" required>
+            <div class="grid grid-cols-2 gap-2">
+              <select class="field" x-model="entityForm.type">
+                <template x-for="kind in entityTypes" :key="kind.value"><option :value="kind.value" x-text="kind.label"></option></template>
+              </select>
+              <select class="field" x-model="entityForm.category">
+                <template x-for="category in categories" :key="category"><option :value="category" x-text="category"></option></template>
+              </select>
+            </div>
+            <input class="field" placeholder="Adres" x-model="entityForm.address">
+            <div class="grid grid-cols-[1fr_1fr_auto] gap-2">
+              <input class="field" type="number" step="any" placeholder="Enlem" x-model="entityForm.latitude">
+              <input class="field" type="number" step="any" placeholder="Boylam" x-model="entityForm.longitude">
+              <button type="button" class="rounded-lg bg-white/10 px-2 text-xs" @click="startPick('entity')" :disabled="!mapReady">Haritadan</button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <input class="field" placeholder="Telefon" x-model="entityForm.phone">
+              <input class="field" placeholder="E-posta" x-model="entityForm.email">
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <input class="field" placeholder="Vergi no" x-model="entityForm.tax_number">
+              <input class="field" type="number" step="0.01" placeholder="Bakiye" x-model="entityForm.current_balance">
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <select class="field" x-model="entityForm.status">
+                <option value="aktif">Aktif</option>
+                <option value="pasif">Pasif</option>
+              </select>
+              <select class="field" x-model="entityForm.region_id">
+                <option value="">Bölge</option>
+                <template x-for="region in regions" :key="region.id"><option :value="region.id" x-text="region.name"></option></template>
+              </select>
+            </div>
+            <div class="flex gap-2">
+              <button class="rounded-lg bg-pine px-3 py-1.5 text-sm font-semibold text-white" :disabled="busy" x-text="editingId ? 'Güncelle' : 'Kaydet'"></button>
+              <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-sand/70" @click="resetEntityForm()">Vazgeç</button>
+            </div>
+          </form>
+          <p class="text-xs text-sand/50" x-show="mapData.unlocated_count" x-text="mapData.unlocated_count + ' cari koordinatsız'"></p>
+          <template x-for="entity in entities" :key="entity.id">
+          <article class="rounded-2xl px-3 py-2" :class="activeId === entity.id ? 'bg-white/15' : 'bg-white/5'">
+            <button type="button" class="w-full text-left" @click="focusEntity(entity)">
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <p class="font-semibold" x-text="entity.name"></p>
+                  <p class="text-xs text-sand/60" x-text="typeLabel(entity.type) + ' · ' + entity.category"></p>
+                </div>
+                <span class="h-2.5 w-2.5 shrink-0 rounded-full mt-1" :class="typeDot(entity.type)"></span>
+              </div>
+              <p class="mt-1 text-sm" x-text="money(entity.current_balance)"></p>
+            </button>
+            <div class="mt-2 flex flex-wrap gap-2 text-xs" x-show="can('entityWrite')">
+              <button type="button" class="text-sand/80 underline" @click="editEntity(entity)">Düzenle</button>
+              <button type="button" class="text-sand/80 underline" @click="geocodeEntity(entity)" x-show="entity.latitude == null">Konumla</button>
+              <button type="button" class="text-copper underline" @click="removeEntity(entity)">Sil</button>
+            </div>
+          </article>
+          </template>
+          <p class="text-sm text-sand/50" x-show="!entities.length">Bu filtrede cari yok.</p>
+        </section>
+
+        <section x-show="tab === 'shipments'" class="space-y-3">
+          <input class="field" placeholder="Cari, plaka veya durum" x-model="shipmentQuery">
+          <button type="button" class="rounded-lg bg-copper px-3 py-1.5 text-sm font-semibold" x-show="can('shipmentWrite')" @click="showShipmentForm = !showShipmentForm">Yeni sevkiyat</button>
+          <form x-show="showShipmentForm && can('shipmentWrite')" class="space-y-2 rounded-2xl bg-white/5 p-3" @submit.prevent="saveShipment">
+            <select class="field" x-model="shipmentForm.entity_id" required>
+              <option value="">Cari</option>
+              <template x-for="entity in allEntities" :key="entity.id"><option :value="entity.id" x-text="entity.name"></option></template>
+            </select>
+            <div class="grid grid-cols-2 gap-2">
+              <select class="field" x-model="shipmentForm.vehicle_id">
+                <option value="">Araç</option>
+                <template x-for="vehicle in vehicles" :key="vehicle.id"><option :value="vehicle.id" x-text="vehicle.plate_number"></option></template>
+              </select>
+              <select class="field" x-model="shipmentForm.driver_id">
+                <option value="">Sürücü</option>
+                <template x-for="driver in drivers" :key="driver.id"><option :value="driver.id" x-text="driver.full_name || driver.username"></option></template>
+              </select>
+            </div>
+            <input class="field" type="date" x-model="shipmentForm.delivery_date">
+            <div class="grid grid-cols-[1fr_70px_70px_auto] gap-1">
+              <input class="field" placeholder="Malzeme" x-model="shipmentForm.draftName">
+              <input class="field" type="number" min="0.1" step="0.1" x-model="shipmentForm.draftQty">
+              <input class="field" placeholder="Birim" x-model="shipmentForm.draftUnit">
+              <button type="button" class="rounded-lg bg-white/10 px-2 text-sm" @click="addShipmentItem">Ekle</button>
+            </div>
+            <p class="text-xs text-sand/70" x-show="shipmentForm.items.length" x-text="itemSummary(shipmentForm.items)"></p>
+            <textarea class="field" rows="2" placeholder="Not" x-model="shipmentForm.notes"></textarea>
+            <button class="rounded-lg bg-pine px-3 py-1.5 text-sm font-semibold text-white" :disabled="busy">Kuyruğa al</button>
+          </form>
+          <template x-for="shipment in visibleShipments" :key="shipment.id">
+          <article class="space-y-2 rounded-2xl bg-white/5 p-3">
+            <div class="flex items-start gap-2">
+              <input type="checkbox" class="mt-1" x-show="can('route')" :checked="routeIds.includes(shipment.id)" @change="toggleRoute(shipment.id)">
+              <div class="min-w-0 flex-1">
+                <p class="font-semibold" x-text="shipment.entity_name"></p>
+                <p class="text-xs text-sand/60" x-text="itemSummary(shipment.items_json) + ' · ' + formatWhen(shipment.delivery_date)"></p>
+              </div>
+              <span class="rounded-full bg-white/10 px-2 py-0.5 text-xs" x-text="shipment.status"></span>
+            </div>
+            <div class="grid grid-cols-2 gap-2" x-show="can('shipmentWrite')">
+              <select class="field" :value="shipment.vehicle_id || ''" @change="assignShipment(shipment, 'vehicle_id', $event.target.value)">
+                <option value="">Araç yok</option>
+                <template x-for="vehicle in vehicles" :key="vehicle.id"><option :value="vehicle.id" x-text="vehicle.plate_number"></option></template>
+              </select>
+              <select class="field" :value="shipment.driver_id || ''" @change="assignShipment(shipment, 'driver_id', $event.target.value)">
+                <option value="">Sürücü yok</option>
+                <template x-for="driver in drivers" :key="driver.id"><option :value="driver.id" x-text="driver.full_name || driver.username"></option></template>
+              </select>
+            </div>
+            <select class="field" x-show="can('status') && ownsShipment(shipment)" :value="shipment.status" @change="changeStatus(shipment, $event.target.value)">
+              <template x-for="status in shipmentStatuses" :key="status"><option :value="status" x-text="status"></option></template>
+            </select>
+            <div class="flex items-center justify-between text-xs text-sand/70">
+              <span x-text="(shipment.vehicle_plate || 'Araçsız') + ' · ' + (shipment.driver_name || 'Sürücüsüz')"></span>
+              <a class="underline" x-show="shipment.proof_of_delivery_img" :href="shipment.proof_of_delivery_img" target="_blank">Kanıt</a>
+            </div>
+            <label class="block text-xs text-sand/70" x-show="(can('proof') && ownsShipment(shipment))">Teslim kanıtı
+              <input class="mt-1 block w-full text-xs" type="file" accept="image/*" @change="uploadProof(shipment, $event)">
+            </label>
+          </article>
+          </template>
+          <div class="flex flex-wrap gap-2" x-show="can('route')">
+            <button type="button" class="rounded-lg bg-white/10 px-3 py-1.5 text-sm" @click="optimizeQueue" :disabled="busy">Sırayı optimize et</button>
+            <button type="button" class="rounded-lg bg-pine px-3 py-1.5 text-sm font-semibold text-white" @click="drawSelected" :disabled="busy">Rotayı çiz</button>
+            <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-sand/70" @click="clearRoute">Temizle</button>
+          </div>
+          <ol class="space-y-1 text-sm" x-show="routePlan">
+            <li x-text="'Çıkış: ' + depotLabel"></li>
+            <template x-for="(stop, index) in (routePlan ? routePlan.stops : [])" :key="stop.id">
+              <li x-text="(index + 1) + '. ' + stop.label + ' · ' + stop.leg_km + ' km'"></li>
+            </template>
+            <li class="text-sand/70" x-text="routePlan ? 'Toplam ' + routePlan.total_km + ' km' : ''"></li>
+          </ol>
+          <button type="button" class="text-sm text-sand/70 underline" x-show="can('fleet')" @click="showFleetForm = !showFleetForm">Filoya araç ekle</button>
+          <form x-show="showFleetForm" class="space-y-2 rounded-2xl bg-white/5 p-3" @submit.prevent="saveVehicle">
+            <input class="field" placeholder="Plaka" x-model="vehicleForm.plate_number" required>
+            <div class="grid grid-cols-2 gap-2">
+              <select class="field" x-model="vehicleForm.vehicle_type">
+                <template x-for="kind in vehicleTypes" :key="kind"><option :value="kind" x-text="kind"></option></template>
+              </select>
+              <select class="field" x-model="vehicleForm.current_status">
+                <option value="Musait">Müsait</option>
+                <option value="Yolda">Yolda</option>
+                <option value="Bakımda">Bakımda</option>
+              </select>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <input class="field" type="number" min="0" placeholder="Kg" x-model="vehicleForm.max_weight_kg">
+              <input class="field" type="number" min="0" step="0.1" placeholder="m³" x-model="vehicleForm.max_volume_m3">
+            </div>
+            <button class="rounded-lg bg-pine px-3 py-1.5 text-sm font-semibold text-white" :disabled="busy">Kaydet</button>
+          </form>
+          <p class="text-sm text-sand/50" x-show="!visibleShipments.length">Sevkiyat yok.</p>
+        </section>
+
+        <section x-show="tab === 'visits'" class="space-y-3">
+          <input class="field" placeholder="Cari veya ziyaret tipi" x-model="visitQuery">
+          <button type="button" class="rounded-lg bg-copper px-3 py-1.5 text-sm font-semibold" x-show="can('visitWrite')" @click="showVisitForm = !showVisitForm">Ziyaret planla</button>
+          <form x-show="showVisitForm && can('visitWrite')" class="space-y-2 rounded-2xl bg-white/5 p-3" @submit.prevent="saveVisit">
+            <select class="field" x-model="visitForm.entity_id" required>
+              <option value="">Cari</option>
+              <template x-for="entity in allEntities" :key="entity.id"><option :value="entity.id" x-text="entity.name"></option></template>
+            </select>
+            <select class="field" x-model="visitForm.visit_type">
+              <template x-for="kind in visitTypes" :key="kind"><option :value="kind" x-text="kind"></option></template>
+            </select>
+            <textarea class="field" rows="2" placeholder="Not" x-model="visitForm.notes"></textarea>
+            <textarea class="field" rows="2" placeholder="Rakip analizi" x-model="visitForm.rakip_analizi"></textarea>
+            <textarea class="field" rows="2" placeholder="Müşteri talebi" x-model="visitForm.musteri_talebi"></textarea>
+            <button class="rounded-lg bg-pine px-3 py-1.5 text-sm font-semibold text-white" :disabled="busy">Kaydet</button>
+          </form>
+          <template x-for="visit in visibleVisits" :key="visit.id">
+          <article class="space-y-2 rounded-2xl bg-white/5 p-3">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <p class="font-semibold" x-text="visit.entity_name"></p>
+                <p class="text-xs text-sand/60" x-text="visit.visit_type + ' · ' + (visit.user_name || '')"></p>
+              </div>
+              <span class="text-xs text-sand/70" x-text="visit.check_out_time ? 'Kapandı' : (visit.check_in_time ? 'Açık' : 'Planlı')"></span>
+            </div>
+            <p class="text-xs text-sand/60" x-text="'Giriş ' + formatWhen(visit.check_in_time) + ' · Çıkış ' + formatWhen(visit.check_out_time)"></p>
+            <div class="flex gap-2" x-show="canEditVisit(visit)">
+              <button type="button" class="rounded-lg bg-white/10 px-2 py-1 text-xs" x-show="!visit.check_in_time" @click="checkIn(visit)">Check-in</button>
+              <button type="button" class="rounded-lg bg-white/10 px-2 py-1 text-xs" x-show="visit.check_in_time && !visit.check_out_time" @click="checkOut(visit)">Check-out</button>
+            </div>
+            <div x-show="canEditVisit(visit)" class="space-y-2">
+              <textarea class="field" rows="2" x-model="visit.draftNotes" placeholder="Not"></textarea>
+              <textarea class="field" rows="2" x-model="visit.draftRakip" placeholder="Rakip analizi"></textarea>
+              <textarea class="field" rows="2" x-model="visit.draftTalep" placeholder="Müşteri talebi"></textarea>
+              <button type="button" class="rounded-lg bg-pine px-3 py-1 text-xs font-semibold text-white" @click="saveForm(visit)">Formu kaydet</button>
+            </div>
+          </article>
+          </template>
+          <p class="text-sm text-sand/50" x-show="!visibleVisits.length">Ziyaret yok.</p>
+        </section>
+
+        <section x-show="tab === 'reports'" class="space-y-3">
+          <div class="grid grid-cols-2 gap-2">
+            <div class="rounded-2xl bg-white/5 p-3"><p class="text-2xl font-semibold" x-text="summary.completed_visits_today"></p><p class="text-xs text-sand/60">Bugün kapanan ziyaret</p></div>
+            <div class="rounded-2xl bg-white/5 p-3"><p class="text-2xl font-semibold" x-text="summary.shipments_on_route"></p><p class="text-xs text-sand/60">Yoldaki sevkiyat</p></div>
+            <div class="rounded-2xl bg-white/5 p-3"><p class="text-2xl font-semibold text-copper" x-text="summary.urgent_deliveries"></p><p class="text-xs text-sand/60">Acil teslimat</p></div>
+            <div class="rounded-2xl bg-white/5 p-3"><p class="text-2xl font-semibold" x-text="summary.pending_shipments"></p><p class="text-xs text-sand/60">Bekleyen sevkiyat</p></div>
+          </div>
+          <h3 class="text-sm font-semibold">Acil kuyruk</h3>
+          <template x-for="shipment in urgentShipments" :key="'urgent-' + shipment.id">
+          <article class="rounded-2xl bg-white/5 px-3 py-2">
+            <p class="font-semibold" x-text="shipment.entity_name"></p>
+            <p class="text-xs text-sand/60" x-text="shipment.status + ' · ' + formatWhen(shipment.delivery_date)"></p>
+          </article>
+          </template>
+          <p class="text-sm text-sand/50" x-show="!urgentShipments.length">Acil teslimat yok.</p>
+
+          <div x-show="can('reports')" class="space-y-3 border-t border-white/10 pt-3">
+            <h3 class="text-sm font-semibold">Gün sonu rota raporu</h3>
+            <div class="grid grid-cols-2 gap-2">
+              <input class="field" type="date" x-model="reportDate" :max="localDate(0)">
+              <select class="field" x-model="reportVehicleId">
+                <option value="">Araç</option>
+                <template x-for="vehicle in reportVehicles" :key="'rv-' + vehicle.id"><option :value="vehicle.id" x-text="vehicle.plate_number"></option></template>
+              </select>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" class="rounded-lg bg-pine px-3 py-1.5 text-sm font-semibold text-white" :disabled="busy" @click="downloadRouteDay('pdf')">PDF</button>
+              <button type="button" class="rounded-lg bg-white/10 px-3 py-1.5 text-sm" :disabled="busy" @click="downloadRouteDay('xlsx')">Excel</button>
+              <button type="button" class="rounded-lg bg-white/10 px-3 py-1.5 text-sm" :disabled="busy" @click="downloadFleetDay()">Tüm filo PDF</button>
+              <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-sand/70 underline" x-show="can('fleetAdmin')" :disabled="busy" @click="archiveNow()">Arşive yaz</button>
+            </div>
+            <p class="text-xs text-sand/50">Raporlar filo takip sisteminden gelen konumlardan hazırlanır: durak, mesafe, süre ve planlı teslimat karşılaştırması. Her gece otomatik olarak arşive yazılır.</p>
+            <h3 class="text-sm font-semibold">Arşiv</h3>
+            <template x-for="item in archive" :key="'ar-' + item.id">
+            <article class="flex items-center justify-between gap-2 rounded-2xl bg-white/5 px-3 py-2">
+              <div>
+                <p class="text-sm font-semibold" x-text="item.plate_number"></p>
+                <p class="text-xs text-sand/60" x-text="formatWhen(item.report_date) + ' · ' + item.distance_km + ' km'"></p>
+              </div>
+              <div class="flex gap-2 text-xs">
+                <button type="button" class="underline" @click="downloadArchive(item, 'pdf')">PDF</button>
+                <button type="button" class="underline" @click="downloadArchive(item, 'xlsx')">Excel</button>
+              </div>
+            </article>
+            </template>
+            <p class="text-sm text-sand/50" x-show="!archive.length">Arşivde rapor yok.</p>
+          </div>
+        </section>
+
+        <section x-show="tab === 'company'" class="space-y-3">
+          <div class="flex items-center gap-3 rounded-2xl bg-white/5 p-3">
+            <div class="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-white">
+              <img x-show="company && company.logo_path" :src="company ? company.logo_path : ''" alt="Logo" class="h-full w-full object-contain">
+              <span x-show="!company || !company.logo_path" class="text-xs text-ink/50">Logo</span>
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="font-semibold" x-text="company ? company.name : ''"></p>
+              <p class="text-xs text-sand/60" x-text="locations.length + ' lokasyon · Rota başlangıcı: ' + depotLabel"></p>
+            </div>
+          </div>
+          <form x-show="can('companyWrite')" class="space-y-2 rounded-2xl bg-white/5 p-3" @submit.prevent="saveCompany">
+            <input class="field" placeholder="Firma unvanı" x-model="companyForm.name" required>
+            <div class="grid grid-cols-2 gap-2">
+              <input class="field" placeholder="Vergi no" x-model="companyForm.tax_number">
+              <input class="field" placeholder="Telefon" x-model="companyForm.phone">
+            </div>
+            <input class="field" placeholder="E-posta" x-model="companyForm.email">
+            <textarea class="field" rows="2" placeholder="Adres" x-model="companyForm.address"></textarea>
+            <div class="flex flex-wrap gap-2">
+              <button class="rounded-lg bg-pine px-3 py-1.5 text-sm font-semibold text-white" :disabled="busy">Kaydet</button>
+              <label class="cursor-pointer rounded-lg bg-white/10 px-3 py-1.5 text-sm">Logo yükle
+                <input class="hidden" type="file" accept=".png,.jpg,.jpeg,.webp" @change="uploadLogo">
+              </label>
+            </div>
+          </form>
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold">Lokasyonlarım</h3>
+            <div class="flex gap-2" x-show="can('companyWrite')">
+              <button type="button" class="rounded-lg bg-copper px-3 py-1.5 text-sm font-semibold" @click="openLocationForm()">Yeni lokasyon</button>
+              <button type="button" class="rounded-lg bg-white/10 px-3 py-1.5 text-sm" @click="startPick('location')" :disabled="!mapReady">Haritadan</button>
+            </div>
+          </div>
+          <form x-show="showLocationForm && can('companyWrite')" class="space-y-2 rounded-2xl bg-white/5 p-3" @submit.prevent="saveLocation">
+            <input class="field" placeholder="Lokasyon adı (ör. İzmir Şube)" x-model="locationForm.name" required>
+            <div class="grid grid-cols-2 gap-2">
+              <select class="field" x-model="locationForm.kind">
+                <template x-for="kind in locationKinds" :key="kind"><option :value="kind" x-text="kind"></option></template>
+              </select>
+              <select class="field" x-model="locationForm.region_id">
+                <option value="">Bölge</option>
+                <template x-for="region in regions" :key="region.id"><option :value="region.id" x-text="region.name"></option></template>
+              </select>
+            </div>
+            <input class="field" placeholder="Adres" x-model="locationForm.address">
+            <div class="grid grid-cols-[1fr_1fr_auto] gap-2">
+              <input class="field" type="number" step="any" placeholder="Enlem" x-model="locationForm.latitude" required>
+              <input class="field" type="number" step="any" placeholder="Boylam" x-model="locationForm.longitude" required>
+              <button type="button" class="rounded-lg bg-white/10 px-2 text-xs" @click="startPick('location')" :disabled="!mapReady">Haritadan</button>
+            </div>
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="locationForm.is_default_depot"> Rotalar buradan başlasın</label>
+            <div class="flex gap-2">
+              <button class="rounded-lg bg-pine px-3 py-1.5 text-sm font-semibold text-white" :disabled="busy" x-text="editingLocationId ? 'Güncelle' : 'Kaydet'"></button>
+              <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-sand/70" @click="resetLocationForm()">Vazgeç</button>
+            </div>
+          </form>
+          <template x-for="location in locations" :key="'loc-' + location.id">
+          <article class="rounded-2xl bg-white/5 px-3 py-2">
+            <button type="button" class="w-full text-left" @click="focusLocation(location)">
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <p class="font-semibold" x-text="location.name"></p>
+                  <p class="text-xs text-sand/60" x-text="location.kind + (location.address ? ' · ' + location.address : '')"></p>
+                </div>
+                <span x-show="location.is_default_depot" class="shrink-0 rounded-full bg-violet-500/30 px-2 py-0.5 text-xs text-violet-100">Rota başlangıcı</span>
+              </div>
+            </button>
+            <div class="mt-2 flex flex-wrap gap-2 text-xs" x-show="can('companyWrite')">
+              <button type="button" class="text-sand/80 underline" @click="editLocation(location)">Düzenle</button>
+              <button type="button" class="text-sand/80 underline" x-show="!location.is_default_depot" @click="makeDefaultDepot(location)">Rota başlangıcı yap</button>
+              <button type="button" class="text-copper underline" @click="removeLocation(location)">Sil</button>
+            </div>
+          </article>
+          </template>
+          <p class="text-sm text-sand/50" x-show="!locations.length">Henüz lokasyon yok. Haritadan işaretleyerek ekleyebilirsiniz.</p>
+          <p class="text-xs text-sand/50" x-show="can('companyWrite')">İpucu: haritadaki mor yıldızları sürükleyerek lokasyonu taşıyabilirsiniz.</p>
+
+          <div x-show="can('companyWrite')" class="space-y-3 border-t border-white/10 pt-3">
+            <h3 class="text-sm font-semibold">Veri: yedekle ve aktar</h3>
+            <p class="text-xs text-sand/60">Tüm kayıtlar bu bilgisayardaki veritabanında kalıcı olarak saklanır. Tam yedek; cariler, sevkiyatlar, ziyaretler, firma, lokasyonlar, araçlar, filo ayarları, konum geçmişi, logo, teslim fotoğrafları ve arşiv raporlarını tek bir ZIP dosyasına koyar.</p>
+            <div class="space-y-2 rounded-2xl bg-white/5 p-3">
+              <label class="flex items-center gap-2 text-sm"><input type="checkbox" x-model="backupWithPositions"> Araç konum geçmişini dahil et</label>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" class="rounded-lg bg-pine px-3 py-1.5 text-sm font-semibold text-white" :disabled="busy" @click="downloadBackup()">Tam yedek indir</button>
+                <label class="cursor-pointer rounded-lg bg-copper px-3 py-1.5 text-sm font-semibold">Yedekten geri yükle
+                  <input class="hidden" type="file" accept=".zip" @change="restoreBackup">
+                </label>
+              </div>
+              <p class="text-xs text-sand/50">Geri yükleme mevcut verinin yerine yedektekini koyar.</p>
+            </div>
+            <div class="space-y-2 rounded-2xl bg-white/5 p-3">
+              <p class="text-sm">Cari listesi</p>
+              <div class="flex flex-wrap gap-2">
+                <button type="button" class="rounded-lg bg-white/10 px-3 py-1.5 text-sm" :disabled="busy" @click="exportEntities('xlsx')">Excel'e aktar</button>
+                <button type="button" class="rounded-lg bg-white/10 px-3 py-1.5 text-sm" :disabled="busy" @click="exportEntities('csv')">CSV'ye aktar</button>
+                <label class="cursor-pointer rounded-lg bg-white/10 px-3 py-1.5 text-sm">Excel/CSV'den al
+                  <input class="hidden" type="file" accept=".csv,.xlsx" @change="importFile">
+                </label>
+              </div>
+              <p class="text-xs text-sand/50">Dışa aktarılan dosya düzenlenip geri alınabilir; içe aktarma yeni kayıt ekler, var olanları güncellemez.</p>
+            </div>
+            <div x-show="lastRestore" class="rounded-2xl bg-white/10 p-3 text-xs">
+              <p class="font-semibold" x-text="lastRestore ? 'Son geri yükleme: ' + (lastRestore.backup_created_at ? formatWhen(lastRestore.backup_created_at) + ' tarihli yedek' : 'yedek') : ''"></p>
+              <p class="text-sand/70" x-text="lastRestore ? (lastRestore.counts.entities || 0) + ' cari · ' + (lastRestore.counts.shipments || 0) + ' sevkiyat · ' + (lastRestore.counts.vehicles || 0) + ' araç · ' + lastRestore.files + ' dosya' : ''"></p>
+              <template x-for="(warning, index) in (lastRestore ? lastRestore.warnings : [])" :key="'rw-' + index">
+                <p class="mt-1 text-copper" x-text="warning"></p>
+              </template>
+            </div>
+          </div>
+        </section>
+
+        <section x-show="tab === 'fleet' && can('fleetView')" class="space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold" x-text="'Araçlar · ' + trackedCount + ' takipte'"></h3>
+            <input class="field w-40" type="date" x-model="trackDate" :max="localDate(0)" title="İz tarihi">
+          </div>
+          <template x-for="vehicle in live" :key="'live-' + vehicle.id">
+          <article class="space-y-1 rounded-2xl bg-white/5 px-3 py-2">
+            <div class="flex items-start justify-between gap-2">
+              <button type="button" class="min-w-0 text-left" @click="focusVehicle(vehicle)">
+                <p class="font-semibold" x-text="vehicle.plate_number"></p>
+                <p class="text-xs text-sand/60" x-text="vehicle.vehicle_type + ' · ' + (vehicle.integration_name ? vehicle.integration_name + ' / ' + vehicle.external_id : 'Filo takibine bağlı değil')"></p>
+              </button>
+              <span class="shrink-0 rounded-full px-2 py-0.5 text-xs" :class="liveBadge(vehicle).cls" x-text="liveBadge(vehicle).text"></span>
+            </div>
+            <div class="flex items-center justify-between text-xs text-sand/70" x-show="vehicle.tracked">
+              <span x-text="(vehicle.speed_kmh != null ? Math.round(vehicle.speed_kmh) + ' km/sa · ' : '') + formatAgo(vehicle.last_seen_at)"></span>
+              <button type="button" class="underline" @click="showVehicleTrack(vehicle)">Günün izi</button>
+            </div>
+          </article>
+          </template>
+          <div x-show="track" class="space-y-2 rounded-2xl bg-white/10 p-3 text-sm">
+            <div class="flex items-center justify-between">
+              <p class="font-semibold" x-text="track ? track.plate_number + ' · ' + formatWhen(track.date) : ''"></p>
+              <button type="button" class="text-xs underline" @click="clearTrack()">Kapat</button>
+            </div>
+            <p class="text-xs text-sand/70" x-text="track ? track.summary.distance_km + ' km · sürüş ' + durationText(track.summary.driving_min) + ' · ' + track.stops.length + ' durak' : ''"></p>
+            <ol class="max-h-48 space-y-1 overflow-y-auto text-xs">
+              <template x-for="stop in (track ? track.stops : [])" :key="'ts-' + stop.index">
+                <li x-text="stop.index + '. ' + timeOf(stop.start) + '–' + timeOf(stop.end) + ' · ' + (stop.place_name || 'Tanımsız nokta') + (stop.planned ? ' ✓' : '')"></li>
+              </template>
+            </ol>
+            <p class="text-xs text-copper" x-show="track && track.missed_planned.length" x-text="track ? 'Uğranmayan planlı: ' + track.missed_planned.join(', ') : ''"></p>
+          </div>
+
+          <div x-show="can('fleetAdmin')" class="space-y-3 border-t border-white/10 pt-3">
+            <div class="flex items-center justify-between">
+              <h3 class="text-sm font-semibold">Filo takip entegrasyonları</h3>
+              <button type="button" class="rounded-lg bg-copper px-3 py-1.5 text-sm font-semibold" @click="openIntegrationForm()">Yeni</button>
+            </div>
+            <form x-show="showIntegrationForm" class="space-y-2 rounded-2xl bg-white/5 p-3" @submit.prevent="saveIntegration">
+              <select class="field" x-model="integrationForm.provider" :disabled="editingIntegrationId" @change="integrationForm.credentials = {}">
+                <template x-for="provider in providers" :key="provider.provider"><option :value="provider.provider" x-text="provider.label"></option></template>
+              </select>
+              <input class="field" placeholder="Görünen ad (ör. Arvento hesabı)" x-model="integrationForm.name" required>
+              <template x-for="field in providerInfo(integrationForm.provider).fields" :key="integrationForm.provider + field.key">
+                <label class="block text-xs text-sand/70"><span x-text="field.label + (field.required ? ' *' : '')"></span>
+                  <input class="field mt-1" :type="field.secret ? 'password' : 'text'" autocomplete="off" :placeholder="credentialPlaceholder(field)" x-model="integrationForm.credentials[field.key]">
+                </label>
+              </template>
+              <div class="grid grid-cols-2 gap-2">
+                <label class="block text-xs text-sand/70">Veri çekme aralığı (dk)
+                  <input class="field mt-1" type="number" min="1" max="1440" x-model="integrationForm.poll_interval_min">
+                </label>
+                <label class="flex items-end gap-2 pb-2 text-sm"><input type="checkbox" x-model="integrationForm.is_active"> Etkin</label>
+              </div>
+              <div class="flex gap-2">
+                <button class="rounded-lg bg-pine px-3 py-1.5 text-sm font-semibold text-white" :disabled="busy" x-text="editingIntegrationId ? 'Güncelle' : 'Kaydet'"></button>
+                <button type="button" class="rounded-lg px-3 py-1.5 text-sm text-sand/70" @click="resetIntegrationForm()">Vazgeç</button>
+              </div>
+              <p class="text-xs text-sand/50">Kimlik bilgileri şifreli saklanır ve bir daha gösterilmez.</p>
+            </form>
+            <template x-for="integration in integrations" :key="'int-' + integration.id">
+            <article class="space-y-2 rounded-2xl bg-white/5 p-3">
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <p class="font-semibold" x-text="integration.name"></p>
+                  <p class="text-xs text-sand/60" x-text="providerLabel(integration.provider) + ' · her ' + integration.poll_interval_min + ' dk · ' + integration.vehicle_count + ' araç'"></p>
+                  <p class="text-xs text-sand/60" x-text="'Son senkron: ' + formatAgo(integration.last_sync_at)"></p>
+                </div>
+                <span class="shrink-0 rounded-full px-2 py-0.5 text-xs" :class="integration.is_active ? 'bg-green-600/30 text-green-100' : 'bg-white/10 text-sand/60'" x-text="integration.is_active ? 'Etkin' : 'Kapalı'"></span>
+              </div>
+              <p class="text-xs text-copper" x-show="integration.last_error" x-text="integration.last_error"></p>
+              <div class="flex flex-wrap gap-2 text-xs">
+                <button type="button" class="rounded-lg bg-white/10 px-2 py-1" :disabled="busy" @click="testIntegration(integration)">Test et</button>
+                <button type="button" class="rounded-lg bg-white/10 px-2 py-1" :disabled="busy" @click="syncIntegration(integration)">Şimdi çek</button>
+                <button type="button" class="rounded-lg bg-white/10 px-2 py-1" :disabled="busy" @click="showExternal(integration)" x-text="externalFor === integration.id ? 'Eşleştirmeyi kapat' : 'Araç eşleştir'"></button>
+                <button type="button" class="underline" @click="editIntegration(integration)">Düzenle</button>
+                <button type="button" class="text-copper underline" @click="removeIntegration(integration)">Sil</button>
+              </div>
+              <div x-show="externalFor === integration.id" class="space-y-1">
+                <template x-for="external in externalVehicles" :key="'ext-' + external.external_id">
+                <div class="grid grid-cols-[1fr_130px] items-center gap-2 text-xs">
+                  <span x-text="external.label + ' (' + external.external_id + ')'"></span>
+                  <select class="field" :value="external.linked_vehicle_id || ''" @change="linkExternal(external, $event.target.value)">
+                    <option value="">Eşleşme yok</option>
+                    <template x-for="vehicle in live" :key="'opt-' + external.external_id + vehicle.id"><option :value="vehicle.id" x-text="vehicle.plate_number"></option></template>
+                  </select>
+                </div>
+                </template>
+              </div>
+            </article>
+            </template>
+            <p class="text-sm text-sand/50" x-show="!integrations.length">Entegrasyon yok. Arvento veya Mobiliz erişimi gelene kadar simülatörle deneyebilirsiniz.</p>
+          </div>
+        </section>
+      </div>
+    </aside>
+
+    <main class="relative min-h-0 flex-1">
+      <div id="map" class="absolute inset-0 z-0"></div>
+      <div x-show="!mapReady" class="absolute inset-0 flex items-center justify-center bg-[#e7efe9] p-8 text-center">
+        <div class="max-w-md">
+          <p class="text-xl font-semibold" x-text="mapError ? 'Harita açılamadı' : 'Harita yükleniyor…'"></p>
+          <p class="mt-2 text-sm text-ink/70" x-show="mapError" x-text="mapError + '. İnternet bağlantısını kontrol edin; liste ve operasyonlar soldan kullanılabilir.'"></p>
+        </div>
+      </div>
+      <div class="absolute right-3 top-3 z-10 grid gap-2 sm:grid-cols-3">
+        <div class="rounded-2xl bg-white/95 px-3 py-2 shadow"><p class="text-xl font-semibold" x-text="summary.completed_visits_today"></p><p class="text-xs text-ink/60">Bugünkü ziyaret</p></div>
+        <div class="rounded-2xl bg-white/95 px-3 py-2 shadow"><p class="text-xl font-semibold" x-text="summary.shipments_on_route"></p><p class="text-xs text-ink/60">Yoldaki sevkiyat</p></div>
+        <div class="rounded-2xl bg-white/95 px-3 py-2 shadow"><p class="text-xl font-semibold text-copper" x-text="summary.urgent_deliveries"></p><p class="text-xs text-ink/60">Acil teslimat</p></div>
+      </div>
+      <div x-show="mapReady" class="absolute left-14 top-3 z-30 w-[min(calc(100%-5rem),380px)] text-sm" @click.outside="searchOpen = false" @keydown.escape="closeSearch()">
+        <form class="flex items-center gap-1 rounded-2xl bg-white px-2 py-1 shadow" @submit.prevent="runSearch()">
+          <svg class="h-4 w-4 shrink-0 text-ink/40" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M8.5 3a5.5 5.5 0 014.38 8.83l3.4 3.4a.75.75 0 11-1.06 1.06l-3.4-3.4A5.5 5.5 0 118.5 3zm0 1.5a4 4 0 100 8 4 4 0 000-8z" clip-rule="evenodd"/></svg>
+          <input class="min-w-0 flex-1 bg-transparent px-1 py-1.5 text-ink outline-none placeholder:text-ink/40" placeholder="Cari, adres veya yer ara" x-model="searchQuery" @input="onSearchInput()" @focus="searchOpen = true" autocomplete="off" aria-label="Haritada ara">
+          <button type="button" class="px-1 text-ink/40 hover:text-ink" x-show="searchQuery" @click="clearSearch()" aria-label="Temizle">×</button>
+          <button class="rounded-xl bg-pine px-3 py-1 text-xs font-semibold text-white disabled:opacity-60" :disabled="searchBusy">Ara</button>
+        </form>
+        <div x-show="searchOpen && searchQuery.trim().length >= 2" class="mt-1 max-h-[60vh] overflow-y-auto rounded-2xl bg-white py-1 text-ink shadow-lg">
+          <template x-if="searchLocal.length">
+            <div>
+              <p class="px-3 pt-2 text-[11px] uppercase tracking-wider text-ink/40">Kayıtlarım</p>
+              <template x-for="item in searchLocal" :key="'sl-' + item.key">
+                <button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-ink/5" @click="chooseLocal(item)">
+                  <span class="block font-semibold" x-text="item.name"></span>
+                  <span class="block truncate text-xs text-ink/60" x-text="item.detail"></span>
+                </button>
+              </template>
+            </div>
+          </template>
+          <template x-if="searchSuggestions.length">
+            <div>
+              <p class="px-3 pt-2 text-[11px] uppercase tracking-wider text-ink/40">Google önerileri</p>
+              <template x-for="(item, index) in searchSuggestions" :key="'ss-' + index">
+                <button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-ink/5" @click="chooseSuggestion(item)">
+                  <span class="block font-semibold" x-text="item.text"></span>
+                  <span class="block truncate text-xs text-ink/60" x-text="item.secondary"></span>
+                </button>
+              </template>
+            </div>
+          </template>
+          <template x-if="searchResults.length">
+            <div>
+              <p class="px-3 pt-2 text-[11px] uppercase tracking-wider text-ink/40" x-text="searchProvider === 'google' ? 'Google sonuçları' : 'OpenStreetMap sonuçları'"></p>
+              <template x-for="(item, index) in searchResults" :key="'sr-' + index">
+                <button type="button" class="block w-full px-3 py-1.5 text-left hover:bg-ink/5" @click="choosePlace(item)">
+                  <span class="block font-semibold" x-text="item.name"></span>
+                  <span class="block truncate text-xs text-ink/60" x-text="item.address"></span>
+                </button>
+              </template>
+            </div>
+          </template>
+          <p class="px-3 py-2 text-xs text-ink/60" x-show="searchBusy">Aranıyor…</p>
+          <p class="px-3 py-2 text-xs text-copper" x-show="!searchBusy && searchWarning" x-text="searchWarning"></p>
+          <p class="px-3 py-2 text-xs text-ink/40" x-show="!searchBusy && !searchWarning && !searchResults.length" x-text="searchHint"></p>
+        </div>
+      </div>
+      <div x-show="picking" class="absolute left-1/2 top-20 z-20 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ink px-4 py-2 text-sm text-sand shadow-lg">
+        <span>Konum için haritaya tıklayın</span>
+        <button type="button" class="underline" @click="cancelPick()">İptal</button>
+      </div>
+      <div x-show="picked" class="absolute left-1/2 top-20 z-20 w-[min(92%,360px)] -translate-x-1/2 rounded-2xl bg-white p-3 text-sm shadow-lg">
+        <p class="text-xs uppercase tracking-wider text-ink/50" x-text="picked && picked.name ? 'Arama sonucu' : 'Seçilen nokta'"></p>
+        <p class="mt-1 font-semibold" x-show="picked && picked.name" x-text="picked ? picked.name : ''"></p>
+        <p class="mt-1" :class="picked && picked.name ? 'text-xs text-ink/70' : 'font-semibold'" x-text="picked ? (picked.loading ? 'Adres aranıyor…' : (picked.address || 'Adres bulunamadı')) : ''"></p>
+        <p class="text-xs text-ink/60" x-text="picked ? picked.lat + ', ' + picked.lng : ''"></p>
+        <div class="mt-3 flex flex-wrap gap-2" x-show="picked && !picked.loading && picked.purpose === 'any'">
+          <button type="button" class="rounded-lg bg-pine px-3 py-1.5 text-xs font-semibold text-white" x-show="can('entityWrite')" @click="usePickedAsEntity()">Cari olarak kaydet</button>
+          <button type="button" class="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white" x-show="can('companyWrite')" @click="usePickedAsLocation()">Firma lokasyonu yap</button>
+          <button type="button" class="rounded-lg px-3 py-1.5 text-xs text-ink/60" @click="cancelPick()">Kapat</button>
+        </div>
+      </div>
+      <div class="absolute bottom-3 left-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-2 rounded-2xl bg-white/95 px-3 py-2 text-xs shadow">
+        <template x-for="layer in mapLayers" :key="layer.key">
+          <button type="button" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5" :class="layers[layer.key] ? 'bg-ink/5' : 'opacity-40 line-through'" @click="toggleLayer(layer.key)" :title="layers[layer.key] ? 'Gizle' : 'Göster'">
+            <i class="h-2.5 w-2.5 rounded-full" :class="layer.dot"></i><span x-text="layer.label"></span>
+          </button>
+        </template>
+        <button type="button" class="rounded-lg bg-ink px-2 py-1 text-sand" x-show="mapReady" @click="toggleHeat" x-text="heatOn ? 'Isı haritasını gizle' : 'Isı haritası'"></button>
+        <span class="text-ink/50" x-show="mapProvider" x-text="mapProvider === 'google' ? 'Google Maps' : 'OpenStreetMap'"></span>
+      </div>
+    </main>
+  </div>
+
+  <div x-show="toast" x-text="toast" class="fixed bottom-4 left-1/2 z-50 max-w-md -translate-x-1/2 rounded-full bg-ink px-4 py-2 text-sm text-sand shadow-lg"></div>
+  <script src="/js/api.js"></script>
+  <script src="/js/map.js"></script>
+  <script src="/js/core.js"></script>
+  <script src="/js/entities.js"></script>
+  <script src="/js/logistics.js"></script>
+  <script src="/js/visits.js"></script>
+  <script src="/js/company.js"></script>
+  <script src="/js/fleet.js"></script>
+  <script src="/js/reports.js"></script>
+  <script src="/js/search.js"></script>
+  <script src="/js/data.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
+</body>
+</html>

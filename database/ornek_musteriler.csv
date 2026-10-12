@@ -1,0 +1,3 @@
+name,type,category,address,latitude,longitude,phone,email,tax_number,current_balance,status,region_code
+Merkezefendi Kırtasiye,customer,Potansiyel,"Sümer Mah., Merkezefendi / Denizli",37.7655,29.0660,02582220001,kirtasiye@example.com,3010000001,0,aktif,MRK
+Pamukkale Ambalaj,supplier,Hammadde Tedarikçisi,"Kınıklı Mah., Pamukkale / Denizli",37.7480,29.1050,02582220002,ambalaj@example.com,3010000002,12500,aktif,PAM
